@@ -2,207 +2,236 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Runner vs God: The Triple Gauntlet</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sniper vs Runners: Multiplayer</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <style>
-        body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        canvas { display: block; }
-        #ui-overlay {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            color: white;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 15px;
-            border-radius: 10px;
-            border: 2px solid #00ffff;
-            pointer-events: none;
-        }
-        .god-controls {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 15px;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 15px;
-            border-radius: 50px;
-            border: 2px solid #ff4444;
-        }
-        button {
-            padding: 12px 20px;
-            border: none;
-            border-radius: 25px;
-            background: #ff4444;
-            color: white;
-            font-weight: bold;
-            cursor: pointer;
-            transition: 0.2s;
-            text-transform: uppercase;
-            font-size: 12px;
-        }
-        button:hover { background: #ff0000; transform: scale(1.1); }
-        button:active { transform: scale(0.9); }
+        body { margin: 0; padding: 0; background: #000; overflow: hidden; touch-action: none; }
+        #ui { position: fixed; top: 10px; left: 10px; color: white; font-family: monospace; z-index: 10; pointer-events: none; }
+        .mobile-btn { position: fixed; width: 60px; height: 60px; background: rgba(255,255,255,0.2); border-radius: 50%; z-index: 20; display: none; }
+        #btn-left { bottom: 40px; left: 20px; }
+        #btn-right { bottom: 40px; left: 100px; }
+        #btn-jump { bottom: 40px; right: 20px; background: rgba(0,255,0,0.3); }
+        .sniper-ui { position: fixed; top: 50%; right: 10px; transform: translateY(-50%); display: none; flex-direction: column; gap: 10px; z-index: 30; }
+        button { padding: 10px; background: #ff4444; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
-
-    <div id="ui-overlay">
-        <div style="font-size: 20px; font-weight: bold;">RUNNER VS GOD</div>
-        <div id="layer-text">LAYER: 1 (BOTTOM)</div>
-        <div style="font-size: 12px; margin-top: 5px; color: #00ff00;">REACH THE YELLOW FINISH LINE</div>
+    <div id="ui">
+        <div id="role-tag">ASSIGNING ROLE...</div>
+        <div id="status">WAITING FOR PLAYERS...</div>
     </div>
 
-    <div class="god-controls">
-        <button onclick="sendChaos('Lightning')">⚡ Strike</button>
-        <button onclick="sendChaos('Wind')">🌪️ Gust</button>
-        <button onclick="sendChaos('Blind')">🌑 Blind</button>
-        <button onclick="sendChaos('Wall')">🧱 Block</button>
-        <button onclick="sendChaos('Gravity')">⚖️ Heavy</button>
+    <!-- Mobile Buttons -->
+    <div id="btn-left" class="mobile-btn"></div>
+    <div id="btn-right" class="mobile-btn"></div>
+    <div id="btn-jump" class="mobile-btn"></div>
+
+    <!-- Sniper Controls -->
+    <div id="sniper-controls" class="sniper-ui">
+        <button onclick="sendAction('Lightning')">⚡ LIGHTNING</button>
+        <button onclick="sendAction('Wind')">🌪️ GUST</button>
+        <button onclick="sendAction('Wall')">🧱 WALL</button>
+        <button onclick="sendAction('Blind')">🌑 BLIND</button>
     </div>
 
     <script>
-        const dbURL = "https://chaosbridge21-default-rtdb.europe-west1.firebasedatabase.app/chaos.json";
-
+        const dbURL = "https://chaosbridge21-default-rtdb.europe-west1.firebasedatabase.app/";
+        const myID = "player_" + Math.floor(Math.random() * 10000);
+        let myRole = "loading"; // runner or sniper
+        let players = {};
+        
         const config = {
             type: Phaser.AUTO,
-            width: window.innerWidth,
-            height: window.innerHeight,
-            physics: {
-                default: 'arcade',
-                arcade: { gravity: { y: 1600 }, debug: false }
-            },
-            scene: { create: create, update: update }
+            width: window.innerWidth, height: window.innerHeight,
+            physics: { default: 'arcade', arcade: { gravity: { y: 1500 } } },
+            scene: { preload: preload, create: create, update: update }
         };
 
-        let player, platforms, keys, lastHandled = 0, currentLayer = 1;
+        let sceneRef, player, platforms, keys, touchData = { left: false, right: false, jump: false };
+        let crosshair, sniperTarget = { x: 0, y: 0 };
         const game = new Phaser.Game(config);
 
-        function create() {
-            const worldWidth = 4000;
-            const worldHeight = 2000;
+        function preload() {}
 
-            // 1. AESTHETICS: Cyan Sky
+        async function create() {
+            sceneRef = this;
             this.cameras.main.setBackgroundColor('#87CEEB');
-            
             platforms = this.physics.add.staticGroup();
 
-            // 2. THE SNAKE MAP (3 Layers)
-            // Layer 1 (Bottom): Right to Left
-            createFloor(this, 0, 1800, 3500, 60); 
-            createFloor(this, 3500, 1500, 60, 300); // Wall Jump Point 1
+            // --- MAP DESIGN (POLISHED) ---
+            // Layer 1 (Bottom)
+            createRect(0, 1800, 3000, 60, 0x2ecc71); 
+            // Stairs to Layer 2 (Fixed size)
+            createRect(2800, 1650, 200, 40, 0x2ecc71);
+            createRect(2600, 1500, 200, 40, 0x2ecc71);
+            
+            // Layer 2 (Middle)
+            createRect(400, 1350, 2400, 60, 0x2ecc71);
+            createRect(400, 1200, 200, 40, 0x2ecc71);
+            createRect(600, 1050, 200, 40, 0x2ecc71);
 
-            // Layer 2 (Middle): Left to Right
-            createFloor(this, 500, 1300, 3060, 60); 
-            createFloor(this, 500, 1000, 60, 300); // Wall Jump Point 2
-
-            // Layer 3 (Top): Right to Finish
-            createFloor(this, 560, 800, 3000, 60); 
-
-            // FINISH LINE
-            let finish = this.add.rectangle(3400, 740, 80, 80, 0xffff00);
+            // Layer 3 (Top)
+            createRect(800, 900, 2200, 60, 0x2ecc71);
+            let finish = this.add.rectangle(2900, 840, 80, 80, 0xffff00);
             this.physics.add.existing(finish, true);
 
-            // 3. THE RUNNER
+            // --- PLAYER ---
             player = this.add.rectangle(200, 1700, 40, 40, 0xff0000);
             this.physics.add.existing(player);
             player.body.setCollideWorldBounds(false);
-            player.body.setBounce(0.1);
-            
             this.physics.add.collider(player, platforms);
-            this.physics.add.overlap(player, finish, () => {
-                alert("GOD HAS BEEN DEFEATED! YOU WIN!");
-                location.reload();
-            });
+            
+            // Sniper Crosshair (Visible to everyone)
+            crosshair = this.add.circle(0, 0, 30, 0xff0000, 0.3).setStrokeStyle(2, 0xff0000);
 
-            // 4. CAMERA: Dynamic Scrolling
-            this.cameras.main.startFollow(player, true, 0.08, 0.08);
-            this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
+            // --- MULTIPLAYER SETUP ---
+            await assignRole();
+            
+            // Listen for Actions
+            setInterval(syncWorld, 100);
+            setInterval(updateMyPos, 50);
 
             keys = this.input.keyboard.addKeys('W,A,S,D,UP,LEFT,RIGHT');
+            setupMobile();
+        }
 
-            // Listen for God's actions
-            setInterval(() => {
-                fetch(dbURL).then(r => r.json()).then(data => {
-                    if (data && data.timestamp > lastHandled) {
-                        executeAbility(this, data.command);
-                        lastHandled = data.timestamp;
+        async function assignRole() {
+            const res = await fetch(dbURL + "players.json");
+            const data = await res.json() || {};
+            const count = Object.keys(data).length;
+            
+            myRole = (count === 0) ? "runner" : (count === 1) ? "runner" : "sniper";
+            document.getElementById('role-tag').innerText = "ROLE: " + myRole.toUpperCase();
+            
+            if (myRole === "sniper") {
+                document.getElementById('sniper-controls').style.display = 'flex';
+                player.setVisible(false);
+                player.body.setAllowGravity(false);
+            } else {
+                sceneRef.cameras.main.startFollow(player, true, 0.1, 0.1);
+            }
+        }
+
+        function createRect(x, y, w, h, color) {
+            let r = sceneRef.add.rectangle(x + w/2, y + h/2, w, h, color);
+            sceneRef.physics.add.existing(r, true);
+            platforms.add(r);
+        }
+
+        let jumpCount = 0;
+        function update() {
+            if (myRole === "loading") return;
+
+            // --- SNIPER CAMERA CONTROL ---
+            if (myRole === "sniper") {
+                if (keys.A.isDown || keys.LEFT.isDown) sceneRef.cameras.main.scrollX -= 15;
+                if (keys.D.isDown || keys.RIGHT.isDown) sceneRef.cameras.main.scrollX += 15;
+                if (keys.W.isDown || keys.UP.isDown) sceneRef.cameras.main.scrollY -= 15;
+                if (keys.S.isDown || keys.DOWN.isDown) sceneRef.cameras.main.scrollY += 15;
+                
+                // Track mouse for crosshair
+                let worldPoint = sceneRef.input.activePointer.positionToCamera(sceneRef.cameras.main);
+                updateSniperAim(worldPoint.x, worldPoint.y);
+            }
+
+            // --- RUNNER MOVEMENT ---
+            if (myRole === "runner") {
+                if (keys.A.isDown || keys.LEFT.isDown || touchData.left) player.body.setVelocityX(-450);
+                else if (keys.D.isDown || keys.RIGHT.isDown || touchData.right) player.body.setVelocityX(450);
+                else player.body.setVelocityX(0);
+
+                if (player.body.touching.down) jumpCount = 0;
+
+                // Double Jump Logic
+                if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(keys.UP) || touchData.jump) {
+                    if (jumpCount < 2) {
+                        player.body.setVelocityY(-800);
+                        jumpCount++;
+                        touchData.jump = false; 
                     }
-                });
-            }, 300);
+                }
+            }
+        }
 
-            // Handle window resizing
-            window.addEventListener('resize', () => {
-                game.scale.resize(window.innerWidth, window.innerHeight);
+        // --- NETWORK SYNC ---
+        function updateMyPos() {
+            if (myRole === "runner") {
+                fetch(`${dbURL}players/${myID}.json`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ x: player.x, y: player.y, role: 'runner' })
+                });
+            }
+        }
+
+        function updateSniperAim(x, y) {
+            fetch(`${dbURL}sniper.json`, {
+                method: 'PUT',
+                body: JSON.stringify({ x: x, y: y, timestamp: Date.now() })
             });
         }
 
-        function createFloor(scene, x, y, w, h) {
-            let f = scene.add.rectangle(x + w/2, y + h/2, w, h, 0x2ecc71);
-            scene.physics.add.existing(f, true);
-            platforms.add(f);
+        async function syncWorld() {
+            const res = await fetch(dbURL + ".json");
+            const data = await res.json();
+            if (!data) return;
+
+            // Sync other runners
+            Object.keys(data.players || {}).forEach(id => {
+                if (id !== myID) {
+                    if (!players[id]) {
+                        players[id] = sceneRef.add.rectangle(0, 0, 40, 40, 0x0000ff);
+                    }
+                    players[id].x = data.players[id].x;
+                    players[id].y = data.players[id].y;
+                }
+            });
+
+            // Sync Sniper Crosshair
+            if (data.sniper) {
+                crosshair.setPosition(data.sniper.x, data.sniper.y);
+            }
+
+            // Sync Sniper Actions
+            if (data.action && data.action.timestamp > lastHandled) {
+                handleAction(data.action);
+                lastHandled = data.action.timestamp;
+            }
         }
 
-        function executeAbility(scene, cmd) {
-            console.log("God Triggered:", cmd);
-            
-            if (cmd === 'Lightning') {
-                let strike = scene.add.rectangle(player.x, player.y - 500, 80, 1200, 0xffffff);
-                scene.tweens.add({ targets: strike, alpha: 0, duration: 400, onComplete: () => strike.destroy() });
-                if (Math.abs(player.x - strike.x) < 60) player.body.reset(200, 1700); 
-            }
-            
-            if (cmd === 'Wind') {
-                player.body.setVelocityX(-2500);
-            }
-            
-            if (cmd === 'Blind') {
-                let overlay = scene.add.rectangle(player.x, player.y, window.innerWidth * 3, window.innerHeight * 3, 0x000000).setAlpha(0.99).setDepth(1000);
-                setTimeout(() => overlay.destroy(), 3500);
-            }
-
-            if (cmd === 'Wall') {
-                let wall = scene.add.rectangle(player.x + 150, player.y, 40, 200, 0x2ecc71);
-                scene.physics.add.existing(wall, true);
-                platforms.add(wall);
-                setTimeout(() => wall.destroy(), 3000);
-            }
-
-            if (cmd === 'Gravity') {
-                player.body.setGravityY(5000);
-                player.setFillStyle(0x4b0082); // Change to purple for heavy
+        function handleAction(act) {
+            if (act.type === 'Lightning') {
+                let warn = sceneRef.add.circle(act.x, act.y, 60, 0xffffff, 0.3);
                 setTimeout(() => {
-                    player.body.setGravityY(0);
-                    player.setFillStyle(0xff0000);
-                }, 5000);
+                    let beam = sceneRef.add.rectangle(act.x, act.y, 80, 2000, 0xffffff);
+                    if (myRole === "runner" && Math.abs(player.x - act.x) < 50) {
+                        player.body.reset(200, 1700); // Survivable: only resets pos
+                    }
+                    setTimeout(() => { beam.destroy(); warn.destroy(); }, 200);
+                }, 500); // 0.5s Warning
+            }
+            if (act.type === 'Wind' && myRole === 'runner') {
+                player.body.setVelocityX(-3000); // Buffed Wind
             }
         }
 
-        function update() {
-            // MOVEMENT (A/D or Arrows)
-            if (keys.A.isDown || keys.LEFT.isDown) {
-                player.body.setVelocityX(-450);
-            } else if (keys.D.isDown || keys.RIGHT.isDown) {
-                player.body.setVelocityX(450);
-            } else {
-                player.body.setVelocityX(0);
-            }
-
-            // JUMPING (W or UP)
-            if ((keys.W.isDown || keys.UP.isDown) && player.body.touching.down) {
-                player.body.setVelocityY(-900);
-            }
-
-            // UI Update for layers
-            if (player.y > 1500) document.getElementById('layer-text').innerText = "LAYER: 1 (BOTTOM)";
-            else if (player.y > 1000) document.getElementById('layer-text').innerText = "LAYER: 2 (MIDDLE)";
-            else document.getElementById('layer-text').innerText = "LAYER: 3 (TOP)";
+        function sendAction(type) {
+            let worldPoint = sceneRef.input.activePointer.positionToCamera(sceneRef.cameras.main);
+            fetch(`${dbURL}action.json`, {
+                method: 'PUT',
+                body: JSON.stringify({ type: type, x: worldPoint.x, y: worldPoint.y, timestamp: Date.now() })
+            });
         }
 
-        function sendChaos(effect) {
-            fetch(dbURL, { method: 'PUT', body: JSON.stringify({ command: effect, timestamp: Date.now() }) });
+        function setupMobile() {
+            if (sceneRef.sys.game.device.os.desktop) return;
+            document.querySelectorAll('.mobile-btn').forEach(b => b.style.display = 'block');
+            
+            document.getElementById('btn-left').ontouchstart = () => touchData.left = true;
+            document.getElementById('btn-left').ontouchend = () => touchData.left = false;
+            document.getElementById('btn-right').ontouchstart = () => touchData.right = true;
+            document.getElementById('btn-right').ontouchend = () => touchData.right = false;
+            document.getElementById('btn-jump').ontouchstart = () => touchData.jump = true;
         }
     </script>
 </body>
