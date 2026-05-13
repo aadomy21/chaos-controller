@@ -3,46 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Battle of the Cosmics</title>
+    <title>Botc: Battle of the Cosmics</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
     <style>
-        body { margin: 0; background: #1a1a1a; overflow: hidden; font-family: sans-serif; touch-action: none; }
-        #ui-layer { position: fixed; top: 10px; left: 10px; color: orange; z-index: 10; pointer-events: none; text-shadow: 2px 2px #000; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Courier New', Courier, monospace; touch-action: none; }
+        #ui-layer { position: fixed; top: 10px; left: 10px; color: orange; z-index: 10; pointer-events: none; }
         .hidden { display: none !important; }
         .controls { position: fixed; bottom: 20px; width: 100%; display: flex; justify-content: center; gap: 15px; z-index: 20; }
         button { 
-            padding: 15px 25px; background: rgba(50, 50, 50, 0.9); color: orange; border: 2px solid orange; 
-            border-radius: 8px; font-weight: bold; pointer-events: auto; font-size: 16px;
+            padding: 15px; background: #222; color: orange; border: 2px solid orange; 
+            border-radius: 5px; font-weight: bold; pointer-events: auto; min-width: 80px;
         }
+        #cooldown-bar { position: fixed; top: 50px; left: 10px; width: 100px; height: 10px; background: #333; border: 1px solid orange; }
+        #cooldown-fill { width: 100%; height: 100%; background: orange; transition: width 0.1s; }
     </style>
 </head>
 <body>
 
 <div id="ui-layer">
-    <h2 id="role-text">BATTLE OF THE COSMICS</h2>
-    <p id="status-text">Connecting to Firebase...</p>
+    <h2 id="role-text">BOTC: LOADING...</h2>
+    <p id="status-text">Synchronizing Cosmics...</p>
+    <div id="cooldown-bar"><div id="cooldown-fill"></div></div>
 </div>
 
-<!-- Mobile Runner Controls -->
 <div id="mobile-runner" class="controls hidden">
     <button ontouchstart="moveDir=-1" ontouchend="moveDir=0">LEFT</button>
-    <button onclick="jump()">JUMP</button>
+    <button ontouchstart="mobileJump()">JUMP</button>
     <button ontouchstart="moveDir=1" ontouchend="moveDir=0">RIGHT</button>
 </div>
 
-<!-- Mobile Sniper Controls -->
 <div id="mobile-sniper" class="controls hidden">
-    <button onclick="cast('Lightning')">⚡ STRIKE (1)</button>
-    <button onclick="cast('Wind')">🌪️ GUST (2)</button>
+    <button onclick="cast('Lightning')">LIT (1)</button>
+    <button onclick="cast('Wind')">GUST (2)</button>
 </div>
 
 <script>
-// --- 1. FIREBASE CONFIG ---
-const firebaseConfig = {
-    databaseURL: "https://chaosbridge21-default-rtdb.europe-west1.firebasedatabase.app/"
-};
+const firebaseConfig = { databaseURL: "https://chaosbridge21-default-rtdb.europe-west1.firebasedatabase.app/" };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 const myID = "p_" + Math.random().toString(36).substr(2, 5);
@@ -50,50 +48,51 @@ const playerRef = db.ref("players/" + myID);
 const actionRef = db.ref("global_action");
 
 let scene, player, crosshair, platforms;
-let myRole = "loading";
-let remotePlayers = {};
-let moveDir = 0;
-let isTouchingUI = false;
-let lastSentX = 0, lastSentY = 0;
+let myRole = "loading", remotePlayers = {}, moveDir = 0;
+let lastCast = 0, cooldown = 2000; 
 
-// --- 2. PHASER GAME ENGINE ---
 const config = {
     type: Phaser.AUTO,
-    width: window.innerWidth,
-    height: window.innerHeight,
-    physics: { default: 'arcade', arcade: { gravity: { y: 1500 }, debug: false } },
+    width: window.innerWidth, height: window.innerHeight,
+    physics: { default: 'arcade', arcade: { gravity: { y: 2000 } } },
     scene: { create, update }
 };
 const game = new Phaser.Game(config);
 
 function create() {
     scene = this;
-    this.cameras.main.setBackgroundColor('#1a1a1a');
-    
     platforms = this.physics.add.staticGroup();
-    
-    // Fix: Create rectangle first, then add to physics
-    let floorRect = this.add.rectangle(1000, 1850, 4000, 100, 0x333333);
-    this.physics.add.existing(floorRect, true); 
-    platforms.add(floorRect);
 
-    // Sniper Crosshair: Hollow Orange Circle
+    // --- THE MAP ---
+    // Ground
+    createPlatform(1000, 1850, 4000, 100, 0xffa500); // Orange "Lava" Floor
+    // Floating Objective Platforms
+    createPlatform(400, 1650, 200, 20, 0x555555);
+    createPlatform(800, 1500, 200, 20, 0x555555);
+    createPlatform(1200, 1650, 200, 20, 0x555555);
+    // THE GOAL
+    let goal = this.add.rectangle(1800, 1400, 100, 100, 0x00ff00).setStrokeStyle(4, 0xffffff);
+    this.add.text(1760, 1330, "GOAL", {color: '#fff'});
+
     crosshair = this.add.circle(0, 0, 30).setStrokeStyle(3, 0xffa500).setDepth(100).setVisible(false);
-
-    // Player Model: Solid Square
+    
     player = this.add.rectangle(200, 1700, 40, 40, 0xff6666);
     this.physics.add.existing(player);
-    player.body.setCollideWorldBounds(true);
+    player.body.setCollideWorldBounds(false); // Let them fall into lava
     this.physics.add.collider(player, platforms);
 
     assignRole();
 }
 
-function assignRole() {
-    db.ref('players').once('value').then((snap) => {
-        const data = snap.val() || {};
-        const count = Object.keys(data).length;
+function createPlatform(x, y, w, h, color) {
+    let p = scene.add.rectangle(x, y, w, h, color);
+    scene.physics.add.existing(p, true);
+    platforms.add(p);
+}
 
+function assignRole() {
+    db.ref('players').once('value').then(snap => {
+        const count = snap.numChildren();
         if (count === 0) {
             myRole = "sniper";
             document.getElementById('mobile-sniper').classList.remove('hidden');
@@ -104,11 +103,9 @@ function assignRole() {
             myRole = "runner";
             document.getElementById('mobile-runner').classList.remove('hidden');
             scene.cameras.main.startFollow(player, true, 0.1, 0.1);
+            scene.cameras.main.setZoom(0.8);
         }
-
         document.getElementById('role-text').innerText = "ROLE: " + myRole.toUpperCase();
-        document.getElementById('status-text').innerText = "ID: " + myID;
-        
         initNetworking();
     });
 }
@@ -117,35 +114,22 @@ function initNetworking() {
     playerRef.onDisconnect().remove();
     playerRef.set({ x: 200, y: 1700 });
 
-    db.ref('players').on('value', (snap) => {
+    db.ref('players').on('value', snap => {
         const all = snap.val() || {};
-        const ids = Object.keys(all);
-        
-        // Cleanup Ghosts
-        Object.keys(remotePlayers).forEach(id => {
-            if (!ids.includes(id)) {
-                remotePlayers[id].destroy();
-                delete remotePlayers[id];
-            }
-        });
-
-        // Update Remote Players
-        ids.forEach(id => {
+        Object.keys(remotePlayers).forEach(id => { if(!all[id]) { remotePlayers[id].destroy(); delete remotePlayers[id]; } });
+        Object.keys(all).forEach(id => {
             if (id !== myID) {
-                if (!remotePlayers[id]) {
-                    remotePlayers[id] = scene.add.rectangle(0, 0, 40, 40, 0x00ccff);
-                }
-                remotePlayers[id].targetX = all[id].x;
-                remotePlayers[id].targetY = all[id].y;
+                if (!remotePlayers[id]) remotePlayers[id] = scene.add.rectangle(0, 0, 40, 40, 0x00ccff);
+                remotePlayers[id].x = all[id].x; remotePlayers[id].y = all[id].y;
             }
         });
     });
 
-    actionRef.on('value', (snap) => {
+    actionRef.on('value', snap => {
         const act = snap.val();
-        if (act && act.t > (window.lastActT || 0)) {
-            window.lastActT = act.t;
-            handleEffect(act);
+        if (act && act.t > (window.lastT || 0)) {
+            window.lastT = act.t;
+            triggerEffect(act);
         }
     });
 }
@@ -153,66 +137,72 @@ function initNetworking() {
 function update() {
     if (myRole === "runner") {
         const keys = this.input.keyboard.createCursorKeys();
-        if (keys.left.isDown || moveDir === -1) player.body.setVelocityX(-500);
-        else if (keys.right.isDown || moveDir === 1) player.body.setVelocityX(500);
+        if (keys.left.isDown || moveDir === -1) player.body.setVelocityX(-600);
+        else if (keys.right.isDown || moveDir === 1) player.body.setVelocityX(600);
         else player.body.setVelocityX(0);
+        
+        if (Phaser.Input.Keyboard.JustDown(keys.up)) jump();
+        
+        playerRef.update({ x: Math.round(player.x), y: Math.round(player.y) });
 
-        if (Phaser.Input.Keyboard.JustDown(keys.up) && player.body.touching.down) jump();
-
-        if (Math.abs(player.x - lastSentX) > 2 || Math.abs(player.y - lastSentY) > 2) {
-            playerRef.update({ x: Math.round(player.x), y: Math.round(player.y) });
-            lastSentX = player.x; lastSentY = player.y;
-        }
+        if (player.y > 2000) respawn(); // Fell off map
     }
 
     if (myRole === "sniper") {
+        let pointer = this.input.activePointer;
+        let worldPoint = pointer.positionToCamera(scene.cameras.main);
+        crosshair.setPosition(worldPoint.x, worldPoint.y);
+        
+        // PC Controls
         const keys = this.input.keyboard.addKeys('ONE,TWO,W,A,S,D');
         if (Phaser.Input.Keyboard.JustDown(keys.ONE)) cast('Lightning');
         if (Phaser.Input.Keyboard.JustDown(keys.TWO)) cast('Wind');
+        
+        if (keys.A.isDown) scene.cameras.main.scrollX -= 15;
+        if (keys.D.isDown) scene.cameras.main.scrollX += 15;
+        if (keys.W.isDown) scene.cameras.main.scrollY -= 15;
+        if (keys.S.isDown) scene.cameras.main.scrollY += 15;
 
-        if (keys.A.isDown) scene.cameras.main.scrollX -= 10;
-        if (keys.D.isDown) scene.cameras.main.scrollX += 10;
-        if (keys.W.isDown) scene.cameras.main.scrollY -= 10;
-        if (keys.S.isDown) scene.cameras.main.scrollY += 10;
-
-        const pointer = this.input.activePointer;
-        if (pointer.isDown && !isTouchingUI) {
-            if (pointer.wasTouch) {
-                scene.cameras.main.scrollX -= (pointer.position.x - pointer.prevPosition.x);
-                scene.cameras.main.scrollY -= (pointer.position.y - pointer.prevPosition.y);
-            }
-            let worldPoint = pointer.positionToCamera(scene.cameras.main);
-            crosshair.setPosition(worldPoint.x, worldPoint.y);
-            playerRef.update({ x: Math.round(worldPoint.x), y: Math.round(worldPoint.y) });
+        // Mobile Drag
+        if (pointer.isDown && pointer.wasTouch && pointer.y < window.innerHeight - 100) {
+            scene.cameras.main.scrollX -= (pointer.position.x - pointer.prevPosition.x);
+            scene.cameras.main.scrollY -= (pointer.position.y - pointer.prevPosition.y);
         }
+        playerRef.update({ x: Math.round(worldPoint.x), y: Math.round(worldPoint.y) });
     }
 
-    Object.values(remotePlayers).forEach(rp => {
-        rp.x = Phaser.Math.Linear(rp.x, rp.targetX || rp.x, 0.2);
-        rp.y = Phaser.Math.Linear(rp.y, rp.targetY || rp.y, 0.2);
-    });
+    let now = Date.now();
+    let p = Math.min(1, (now - lastCast) / cooldown);
+    document.getElementById('cooldown-fill').style.width = (p * 100) + "%";
 }
 
-function jump() {
-    if (player.body && player.body.touching.down) player.body.setVelocityY(-900);
-}
+function jump() { if (player.body.blocked.down || player.body.touching.down) player.body.setVelocityY(-1000); }
+function mobileJump() { jump(); }
 
 function cast(type) {
-    isTouchingUI = true;
+    if (Date.now() - lastCast < cooldown) return;
+    lastCast = Date.now();
     let worldPoint = scene.input.activePointer.positionToCamera(scene.cameras.main);
     actionRef.set({ type, x: Math.round(worldPoint.x), y: Math.round(worldPoint.y), t: Date.now() });
-    setTimeout(() => { isTouchingUI = false; }, 200);
 }
 
-function handleEffect(act) {
+function triggerEffect(act) {
     if (act.type === "Lightning") {
-        let beam = scene.add.rectangle(act.x, act.y - 1000, 15, 2000, 0xffffff);
-        scene.tweens.add({ targets: beam, alpha: 0, duration: 300, onComplete: () => beam.destroy() });
-        if (myRole === "runner" && Math.abs(player.x - act.x) < 30) {
-            player.setPosition(200, 1700);
+        let b = scene.add.rectangle(act.x, act.y - 1000, 20, 2000, 0xffffff);
+        scene.tweens.add({ targets: b, alpha: 0, duration: 200, onComplete: () => b.destroy() });
+        if (myRole === "runner" && Math.abs(player.x - act.x) < 40 && Math.abs(player.y - act.y) < 100) respawn();
+    } 
+    else if (act.type === "Wind") {
+        let c = scene.add.circle(act.x, act.y, 100).setStrokeStyle(2, 0x00ffff);
+        scene.tweens.add({ targets: c, scale: 2, alpha: 0, duration: 400, onComplete: () => c.destroy() });
+        if (myRole === "runner" && Phaser.Math.Distance.Between(player.x, player.y, act.x, act.y) < 150) {
+            player.body.setVelocityY(-1200); // Blast them up!
+            player.body.setVelocityX(player.x < act.x ? -800 : 800);
         }
     }
 }
+
+function respawn() { player.setPosition(200, 1700); player.body.setVelocity(0); }
 </script>
 </body>
 </html>
