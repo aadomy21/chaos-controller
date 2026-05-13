@@ -4,11 +4,11 @@
     <title>Runner vs God: The Gauntlet</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <style>
-        body { background: #0f0f0f; color: #00ff00; text-align: center; font-family: 'Courier New', Courier, monospace; }
-        #game-container { margin: 10px auto; border: 4px solid #333; width: 800px; height: 400px; }
-        .dashboard { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; max-width: 800px; margin: 0 auto; }
-        button { padding: 15px 5px; font-weight: bold; cursor: pointer; background: #222; color: #ff4444; border: 2px solid #ff4444; border-radius: 5px; transition: 0.2s; }
-        button:hover { background: #ff4444; color: white; }
+        body { background: #0f0f0f; color: #00ff00; text-align: center; font-family: 'Courier New', Courier, monospace; margin: 0; overflow: hidden; }
+        #game-container { margin: 10px auto; border: 4px solid #333; width: 800px; height: 400px; background: #000; }
+        .dashboard { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; max-width: 800px; margin: 0 auto; padding: 10px; }
+        button { padding: 15px 5px; font-weight: bold; cursor: pointer; background: #222; color: #ff4444; border: 2px solid #ff4444; border-radius: 5px; }
+        button:active { background: #ff4444; color: #000; }
     </style>
 </head>
 <body>
@@ -29,30 +29,38 @@
             type: Phaser.AUTO,
             width: 800, height: 400,
             parent: 'game-container',
-            physics: { default: 'arcade', arcade: { gravity: { y: 1000 }, debug: false } },
+            physics: { default: 'arcade', arcade: { gravity: { y: 1200 }, debug: false } },
             scene: { preload: preload, create: create, update: update }
         };
 
-        let player, platforms, lastHandled = 0, cursors;
+        let player, platforms, lastHandled = 0, keys;
 
-        function preload() {
-            this.load.image('ground', 'https://labs.phaser.io/assets/sprites/platform.png');
-            this.load.image('player', 'https://labs.phaser.io/assets/sprites/blue_ball.png');
-            this.load.image('bolt', 'https://labs.phaser.io/assets/sprites/fleshlight.png'); // Lightning proxy
-        }
+        function preload() {} // No external images needed anymore
 
         function create() {
-            // Platforms
+            // Create Ground (Green Rectangle)
             platforms = this.physics.add.staticGroup();
-            platforms.create(400, 380, 'ground').setScale(2).refreshBody();
-            platforms.create(600, 250, 'ground');
+            let groundRef = this.add.rectangle(400, 380, 800, 40, 0x00ff00);
+            this.physics.add.existing(groundRef, true);
+            platforms.add(groundRef);
 
-            // Player
-            player = this.physics.add.sprite(50, 300, 'player');
-            player.setBounce(0.1).setCollideWorldBounds(true);
+            // Create Platforms
+            let plat1 = this.add.rectangle(600, 250, 200, 20, 0x00ff00);
+            this.physics.add.existing(plat1, true);
+            platforms.add(plat1);
+
+            // Create Player (Red Square)
+            player = this.add.rectangle(50, 300, 30, 30, 0xff0000);
+            this.physics.add.existing(player);
+            player.body.setCollideWorldBounds(true);
+            
             this.physics.add.collider(player, platforms);
 
-            cursors = this.input.keyboard.createCursorKeys();
+            // SETUP CONTROLS (Arrows + A/D)
+            keys = this.input.keyboard.addKeys({
+                up: 'UP', down: 'DOWN', left: 'LEFT', right: 'RIGHT',
+                w: 'W', a: 'A', s: 'S', d: 'D'
+            });
 
             // Bridge Listener
             setInterval(() => {
@@ -66,29 +74,41 @@
         }
 
         function executeAbility(scene, cmd) {
+            console.log("Ability Triggered:", cmd);
             if (cmd === 'Lightning') {
-                let strike = scene.add.rectangle(player.x, 200, 40, 400, 0xffff00);
-                scene.tweens.add({ targets: strike, alpha: 0, duration: 500 });
-                if (Math.abs(player.x - strike.x) < 30) player.setPosition(50, 300); // Reset player
+                let strike = scene.add.rectangle(player.x, 200, 50, 400, 0xffffff);
+                scene.tweens.add({ targets: strike, alpha: 0, duration: 500, onComplete: () => strike.destroy() });
+                if (Math.abs(player.x - strike.x) < 40) player.body.reset(50, 300); 
             }
             if (cmd === 'Wind') {
-                player.body.setVelocityX(-1000);
+                player.body.setVelocityX(-1500);
             }
             if (cmd === 'Blind') {
-                let overlay = scene.add.rectangle(400, 200, 800, 400, 0x000000).setAlpha(0.9);
+                let overlay = scene.add.rectangle(400, 200, 800, 400, 0x000000).setAlpha(0.95).setDepth(100);
                 setTimeout(() => overlay.destroy(), 3000);
             }
             if (cmd === 'Wall') {
-                let wall = platforms.create(player.x + 100, 300, 'ground').setScale(0.2, 2).refreshBody();
-                setTimeout(() => wall.destroy(), 2000);
+                let wall = scene.add.rectangle(player.x + 80, player.y, 20, 100, 0x00ff00);
+                scene.physics.add.existing(wall, true);
+                platforms.add(wall);
+                setTimeout(() => wall.destroy(), 2500);
             }
         }
 
         function update() {
-            if (cursors.left.isDown) player.setVelocityX(-200);
-            else if (cursors.right.isDown) player.setVelocityX(200);
-            else player.setVelocityX(0);
-            if (cursors.up.isDown && player.body.touching.down) player.setVelocityY(-600);
+            // Horizontal Movement (Arrows or A/D)
+            if (keys.left.isDown || keys.a.isDown) {
+                player.body.setVelocityX(-250);
+            } else if (keys.right.isDown || keys.d.isDown) {
+                player.body.setVelocityX(250);
+            } else {
+                player.body.setVelocityX(0);
+            }
+
+            // Jump (Up or W)
+            if ((keys.up.isDown || keys.w.isDown) && player.body.touching.down) {
+                player.body.setVelocityY(-650);
+            }
         }
 
         function sendChaos(effect) {
