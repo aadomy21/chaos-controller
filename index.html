@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chaos Controller</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #1a1a1a; color: white; padding-top: 50px; }
+        .btn-container { display: flex; flex-direction: column; align-items: center; gap: 15px; }
+        button { font-size: 18px; padding: 20px 40px; width: 250px; cursor: pointer; border-radius: 12px; border: none; background: #e67e22; color: white; font-weight: bold; transition: 0.2s; }
+        button:hover { background: #d35400; transform: translateY(-2px); }
+        button:active { transform: scale(0.98); }
+    </style>
+</head>
+<body>
+    <h1>DougDoug Chaos Console</h1>
+    <div class="btn-container">
+        <button onclick="sendChaos('Gravity Flip')">Flip Gravity (G)</button>
+        <button onclick="sendChaos('Spawn Enemy')">Spawn Enemy (E)</button>
+        <button onclick="sendChaos('Speed Boost')">Speed Boost (S)</button>
+    </div>
+
+    <script>
+        // THIS IS YOUR BRIDGE URL
+        const dbURL = "https://chaosbridge21-default-rtdb.europe-west1.firebasedatabase.app/chaos.json";
+
+        function sendChaos(effect) {
+            fetch(dbURL, {
+                method: 'PUT',
+                body: JSON.stringify({ 
+                    command: effect, 
+                    timestamp: Date.now() 
+                })
+            })
+            .then(() => console.log("Chaos Sent: " + effect))
+            .catch(err => console.error("Error:", err));
+        }
+    </script>
+</body>
+</html>
