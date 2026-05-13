@@ -3,226 +3,203 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sniper vs Runners: Pro</title>
+    <title>Sniper vs Runners: Master Edition</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; }
-        #ui { position: fixed; top: 10px; left: 10px; color: #0f0; z-index: 10; pointer-events: none; text-shadow: 2px 2px #000; }
-        .mobile-btn { position: fixed; width: 70px; height: 70px; background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; z-index: 20; display: none; }
-        #btn-left { bottom: 30px; left: 20px; }
-        #btn-right { bottom: 30px; left: 110px; }
-        #btn-jump { bottom: 30px; right: 20px; background: rgba(0,255,0,0.2); }
-        .sniper-ui { position: fixed; top: 10px; right: 10px; display: none; flex-direction: column; gap: 8px; z-index: 30; }
-        button { padding: 12px; background: #222; color: #ff4444; border: 2px solid #ff4444; font-weight: bold; cursor: pointer; border-radius: 5px; }
-        #overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; color: white; font-size: 24px; z-index: 100; flex-direction: column; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; z-index: 100; text-align: center; }
+        #ui { position: fixed; top: 10px; left: 10px; color: white; z-index: 10; pointer-events: none; text-shadow: 1px 1px #000; }
+        .sniper-btn { padding: 10px; background: #ff4444; color: white; border: none; margin: 5px; cursor: pointer; border-radius: 4px; font-weight: bold; }
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
-    <div id="overlay">CONNECTING TO SERVER...</div>
-
-    <div id="ui">
-        <div id="role-display">PENDING...</div>
-        <div id="lives-display">LIVES: 3</div>
-        <div id="player-count">PLAYERS: 0/2</div>
+    <div id="overlay">
+        <h1 id="status-msg">WAITING FOR PLAYERS...</h1>
+        <p id="p-count">Current: 0/2</p>
     </div>
 
-    <div id="btn-left" class="mobile-btn"></div>
-    <div id="btn-right" class="mobile-btn"></div>
-    <div id="btn-jump" class="mobile-btn"></div>
-
-    <div id="sniper-controls" class="sniper-ui">
-        <button onclick="sendAction('Lightning')">⚡ LIGHTNING</button>
-        <button onclick="sendAction('Wind')">🌪️ GUST</button>
-        <button onclick="sendAction('Blind')">🌑 BLIND</button>
+    <div id="ui">
+        <div id="role-ui">ROLE: ???</div>
+        <div id="lives-ui">LIVES: 3</div>
+        <div id="sniper-controls" class="hidden">
+            <button class="sniper-btn" onclick="cast('Lightning')">⚡ STRIKE</button>
+            <button class="sniper-btn" onclick="cast('Wind')">🌪️ GUST</button>
+        </div>
     </div>
 
     <script>
-        const dbURL = "https://chaosbridge21-default-rtdb.europe-west1.firebasedatabase.app/";
-        const myID = "p_" + Math.floor(Math.random() * 9999);
-        let myRole = "none", myLives = 3, gameState = "waiting";
-        let remotePlayers = {}, lastHandled = 0;
+        // --- 1. FIREBASE SETUP ---
+        const firebaseConfig = { databaseURL: "https://chaosbridge21-default-rtdb.europe-west1.firebasedatabase.app/" };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        
+        const myID = "p_" + Math.random().toString(36).substr(2, 5);
+        const playerRef = db.ref('players/' + myID);
+        const actionRef = db.ref('global_action');
+
+        // --- 2. GAME VARIABLES ---
+        let myRole = "none", myLives = 3, gameStarted = false, lastActionT = 0;
+        let lastSentX = 0, lastSentY = 0;
+        let remotePlayers = {}, player, platforms, crosshair, scene;
 
         const config = {
             type: Phaser.AUTO, width: window.innerWidth, height: window.innerHeight,
             physics: { default: 'arcade', arcade: { gravity: { y: 1600 } } },
             scene: { create: create, update: update }
         };
-
-        let scene, player, platforms, keys, touch = { left: false, right: false, jump: false }, crosshair;
-        const game = new Phaser.Game(config);
+        new Phaser.Game(config);
 
         function create() {
             scene = this;
-            this.cameras.main.setBackgroundColor('#87CEEB');
+            this.cameras.main.setBackgroundColor('#4488aa');
             platforms = this.physics.add.staticGroup();
 
-            // --- REFINED MAP ---
-            createRect(0, 1800, 4000, 100, 0x27ae60); // Ground
-            // Layer 1 Stairs
-            createRect(3400, 1600, 300, 40, 0x2ecc71);
-            createRect(3100, 1450, 300, 40, 0x2ecc71);
-            // Layer 2
-            createRect(400, 1300, 3000, 60, 0x27ae60);
-            createRect(400, 1150, 300, 40, 0x2ecc71);
-            createRect(700, 1000, 300, 40, 0x2ecc71);
-            // Layer 3
-            createRect(1000, 850, 3000, 60, 0x27ae60);
-            
-            let finish = this.add.rectangle(3800, 780, 80, 80, 0xffff00);
-            this.physics.add.existing(finish, true);
+            drawRect(0, 1800, 4000, 100, 0x22aa55); // Ground
+            drawRect(1000, 1500, 3000, 50, 0x22aa55); // Mid
+            drawRect(200, 1200, 3000, 50, 0x22aa55); // Top
 
-            // --- RUNNER ---
-            player = this.add.rectangle(200, 1700, 40, 40, 0xe74c3c);
+            player = this.add.rectangle(200, 1700, 40, 40, 0xff6666);
             this.physics.add.existing(player);
             this.physics.add.collider(player, platforms);
-            this.physics.add.overlap(player, finish, () => endGame("RUNNERS WIN!"));
 
-            crosshair = this.add.circle(0, 0, 40, 0xff0000, 0).setStrokeStyle(3, 0xff0000).setDepth(100);
+            crosshair = this.add.circle(0, 0, 30, 0xff0000, 0).setStrokeStyle(2, 0xff0000).setDepth(100);
 
-            keys = this.input.keyboard.addKeys('W,A,S,D,UP,LEFT,RIGHT');
-            setupLobby();
-            setupMobile();
-            setInterval(sync, 100); // Poll Firebase
+            initNetworking();
         }
 
-        async function setupLobby() {
-            // Remove me when I leave
-            window.addEventListener('beforeunload', () => fetch(`${dbURL}players/${myID}.json`, { method: 'DELETE' }));
-            
-            // Join Lobby
-            await fetch(`${dbURL}players/${myID}.json`, { 
-                method: 'PUT', 
-                body: JSON.stringify({ id: myID, x: 200, y: 1700, active: true }) 
-            });
-        }
-
-        function createRect(x, y, w, h, col) {
+        function drawRect(x, y, w, h, col) {
             let r = scene.add.rectangle(x + w/2, y + h/2, w, h, col);
             scene.physics.add.existing(r, true);
             platforms.add(r);
         }
 
-        let jumps = 0;
+        function initNetworking() {
+            playerRef.onDisconnect().remove();
+            playerRef.set({ id: myID, x: 200, y: 1700 });
+
+            db.ref('players').on('value', (snap) => {
+                const all = snap.val() || {};
+                const ids = Object.keys(all);
+                document.getElementById('p-count').innerText = `Current: ${ids.length}/2`;
+
+                if (ids.length >= 2 && !gameStarted) {
+                    gameStarted = true;
+                    document.getElementById('overlay').classList.add('hidden');
+                    assignRoles(ids);
+                }
+
+                ids.forEach(id => {
+                    if (id !== myID) {
+                        if (!remotePlayers[id]) remotePlayers[id] = scene.add.rectangle(0, 0, 40, 40, 0x66ccff);
+                        remotePlayers[id].targetX = all[id].x;
+                        remotePlayers[id].targetY = all[id].y;
+                    }
+                });
+
+                Object.keys(remotePlayers).forEach(id => {
+                    if (!all[id]) { remotePlayers[id].destroy(); delete remotePlayers[id]; }
+                });
+            });
+
+            actionRef.on('value', (snap) => {
+                const a = snap.val();
+                if (a && a.t > lastActionT) {
+                    handleAction(a);
+                    lastActionT = a.t;
+                }
+            });
+        }
+
+        function assignRoles(ids) {
+            if (ids[0] === myID) {
+                myRole = "runner";
+                scene.cameras.main.startFollow(player, true, 0.1, 0.1);
+            } else {
+                myRole = "sniper";
+                document.getElementById('sniper-controls').classList.remove('hidden');
+                player.setVisible(false);
+                player.body.setAllowGravity(false);
+            }
+            document.getElementById('role-ui').innerText = "ROLE: " + myRole.toUpperCase();
+        }
+
         function update() {
-            if (gameState === "waiting") return;
+            if (!gameStarted) return;
 
             if (myRole === "runner") {
-                // Movement
-                if (keys.A.isDown || keys.LEFT.isDown || touch.left) player.body.setVelocityX(-500);
-                else if (keys.D.isDown || keys.RIGHT.isDown || touch.right) player.body.setVelocityX(500);
+                const keys = this.input.keyboard.createCursorKeys();
+                if (keys.left.isDown) player.body.setVelocityX(-500);
+                else if (keys.right.isDown) player.body.setVelocityX(500);
                 else player.body.setVelocityX(0);
 
-                if (player.body.touching.down) jumps = 0;
-                if ((Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(keys.UP) || touch.jump) && jumps < 2) {
-                    player.body.setVelocityY(-850);
-                    jumps++;
-                    touch.jump = false;
+                if (keys.up.isDown && player.body.touching.down) player.body.setVelocityY(-900);
+                if (player.y > 2100) respawn();
+
+                // Optimized Update
+                if (Math.abs(player.x - lastSentX) > 1 || Math.abs(player.y - lastSentY) > 1) {
+                    playerRef.update({ x: Math.round(player.x), y: Math.round(player.y) });
+                    lastSentX = player.x; lastSentY = player.y;
                 }
+            }
 
-                // Void Check
-                if (player.y > 2100) die();
-
-                // Send Pos
-                fetch(`${dbURL}players/${myID}.json`, { method: 'PATCH', body: JSON.stringify({ x: player.x, y: player.y }) });
-            } 
-            
             if (myRole === "sniper") {
-                if (keys.A.isDown) scene.cameras.main.scrollX -= 20;
-                if (keys.D.isDown) scene.cameras.main.scrollX += 20;
-                if (keys.W.isDown) scene.cameras.main.scrollY -= 20;
-                if (keys.S.isDown) scene.cameras.main.scrollY += 20;
-
+                const keys = this.input.keyboard.addKeys('W,A,S,D');
+                if (keys.A.isDown) scene.cameras.main.scrollX -= 15;
+                if (keys.D.isDown) scene.cameras.main.scrollX += 15;
+                if (keys.W.isDown) scene.cameras.main.scrollY -= 15;
+                if (keys.S.isDown) scene.cameras.main.scrollY += 15;
+                
                 let ptr = scene.input.activePointer.positionToCamera(scene.cameras.main);
-                fetch(`${dbURL}sniper.json`, { method: 'PUT', body: JSON.stringify({ x: ptr.x, y: ptr.y }) });
+                crosshair.setPosition(ptr.x, ptr.y);
+
+                // Sync crosshair so Runner can see the "scope"
+                if (Math.abs(ptr.x - lastSentX) > 5 || Math.abs(ptr.y - lastSentY) > 5) {
+                    playerRef.update({ x: Math.round(ptr.x), y: Math.round(ptr.y) });
+                    lastSentX = ptr.x; lastSentY = ptr.y;
+                }
             }
 
-            // --- SMOOTH INTERPOLATION (LERP) ---
-            Object.values(remotePlayers).forEach(p => {
-                if (p.targetX) {
-                    p.x = Phaser.Math.Linear(p.x, p.targetX, 0.2); // Smoothly slide to target
-                    p.y = Phaser.Math.Linear(p.y, p.targetY, 0.2);
+            // Smooth Movement
+            Object.values(remotePlayers).forEach(rp => {
+                if (rp.targetX !== undefined) {
+                    rp.x = Phaser.Math.Linear(rp.x, rp.targetX, 0.15);
+                    rp.y = Phaser.Math.Linear(rp.y, rp.targetY, 0.15);
                 }
             });
         }
 
-        async function sync() {
-            const res = await fetch(dbURL + ".json");
-            const data = await res.json();
-            if (!data) return;
-
-            // 1. Role & Lobby Management
-            const pList = Object.keys(data.players || {});
-            document.getElementById('player-count').innerText = `PLAYERS: ${pList.length}/2`;
-            
-            if (gameState === "waiting" && pList.length >= 2) {
-                gameState = "active";
-                document.getElementById('overlay').style.display = 'none';
-                myRole = (pList[0] === myID || pList[1] === myID) ? "runner" : "sniper";
-                document.getElementById('role-display').innerText = "ROLE: " + myRole.toUpperCase();
-                if (myRole === "sniper") {
-                    document.getElementById('sniper-controls').style.display = 'flex';
-                    player.setVisible(false); player.body.setAllowGravity(false);
-                } else {
-                    scene.cameras.main.startFollow(player, true, 0.1, 0.1);
-                }
-            }
-
-            // 2. Sync Runners
-            pList.forEach(id => {
-                if (id !== myID) {
-                    if (!remotePlayers[id]) remotePlayers[id] = scene.add.rectangle(0, 0, 40, 40, 0x3498db);
-                    remotePlayers[id].targetX = data.players[id].x;
-                    remotePlayers[id].targetY = data.players[id].y;
-                }
-            });
-
-            // 3. Sync Sniper
-            if (data.sniper) crosshair.setPosition(data.sniper.x, data.sniper.y);
-
-            // 4. Sync Actions
-            if (data.action && data.action.t > lastHandled) {
-                handleAction(data.action);
-                lastHandled = data.action.t;
-            }
-        }
-
-        function die() {
+        function respawn() {
             myLives--;
-            document.getElementById('lives-display').innerText = `LIVES: ${myLives}`;
-            if (myLives <= 0) endGame("SNIPER WINS!");
-            else player.body.reset(200, 1700);
+            document.getElementById('lives-ui').innerText = `LIVES: ${myLives}`;
+            if (myLives <= 0) {
+                alert("GAME OVER!");
+                db.ref('/').remove();
+                location.reload();
+            } else {
+                player.body.reset(200, 1700);
+            }
+        }
+
+        function cast(type) {
+            let ptr = scene.input.activePointer.positionToCamera(scene.cameras.main);
+            actionRef.set({ type, x: ptr.x, y: ptr.y, t: Date.now() });
         }
 
         function handleAction(a) {
             if (a.type === 'Lightning') {
-                let w = scene.add.circle(a.x, a.y, 60, 0xffffff, 0.2);
+                let s = scene.add.circle(a.x, a.y, 50, 0xffffff, 0.5);
                 setTimeout(() => {
-                    let beam = scene.add.rectangle(a.x, a.y, 80, 2500, 0xffffff);
-                    if (myRole === "runner" && Math.abs(player.x - a.x) < 50) die();
-                    setTimeout(() => { beam.destroy(); w.destroy(); }, 150);
-                }, 450);
+                    let beam = scene.add.rectangle(a.x, a.y, 60, 3000, 0xffffff);
+                    if (myRole === 'runner' && Math.abs(player.x - a.x) < 40) respawn();
+                    setTimeout(() => { beam.destroy(); s.destroy(); }, 200);
+                }, 500);
             }
-            if (a.type === 'Wind' && myRole === 'runner') player.body.setVelocityX(-4000);
-        }
-
-        function sendAction(type) {
-            let ptr = scene.input.activePointer.positionToCamera(scene.cameras.main);
-            fetch(`${dbURL}action.json`, { method: 'PUT', body: JSON.stringify({ type, x: ptr.x, y: ptr.y, t: Date.now() }) });
-        }
-
-        function endGame(msg) {
-            alert(msg);
-            fetch(dbURL + ".json", { method: 'DELETE' }).then(() => location.reload());
-        }
-
-        function setupMobile() {
-            if (scene.sys.game.device.os.desktop) return;
-            document.querySelectorAll('.mobile-btn').forEach(b => b.style.display = 'block');
-            document.getElementById('btn-left').ontouchstart = () => touch.left = true;
-            document.getElementById('btn-left').ontouchend = () => touch.left = false;
-            document.getElementById('btn-right').ontouchstart = () => touch.right = true;
-            document.getElementById('btn-right').ontouchend = () => touch.right = false;
-            document.getElementById('btn-jump').ontouchstart = () => touch.jump = true;
+            if (a.type === 'Wind' && myRole === 'runner') {
+                player.body.setVelocityX(-3000);
+            }
         }
     </script>
 </body>
