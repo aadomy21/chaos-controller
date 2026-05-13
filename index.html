@@ -1,57 +1,208 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Runner vs God</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Runner vs God: The Triple Gauntlet</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <style>
-        body { background: #111; color: #0f0; text-align: center; margin: 0; }
-        #game-container { margin: 20px auto; width: 800px; height: 400px; border: 2px solid #555; }
+        body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        #ui-overlay {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px solid #00ffff;
+            pointer-events: none;
+        }
+        .god-controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 50px;
+            border: 2px solid #ff4444;
+        }
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 25px;
+            background: #ff4444;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.2s;
+            text-transform: uppercase;
+            font-size: 12px;
+        }
+        button:hover { background: #ff0000; transform: scale(1.1); }
+        button:active { transform: scale(0.9); }
     </style>
 </head>
 <body>
-    <h2 id="status">LOADING ENGINE...</h2>
-    <div id="game-container"></div>
-    
+
+    <div id="ui-overlay">
+        <div style="font-size: 20px; font-weight: bold;">RUNNER VS GOD</div>
+        <div id="layer-text">LAYER: 1 (BOTTOM)</div>
+        <div style="font-size: 12px; margin-top: 5px; color: #00ff00;">REACH THE YELLOW FINISH LINE</div>
+    </div>
+
+    <div class="god-controls">
+        <button onclick="sendChaos('Lightning')">⚡ Strike</button>
+        <button onclick="sendChaos('Wind')">🌪️ Gust</button>
+        <button onclick="sendChaos('Blind')">🌑 Blind</button>
+        <button onclick="sendChaos('Wall')">🧱 Block</button>
+        <button onclick="sendChaos('Gravity')">⚖️ Heavy</button>
+    </div>
+
     <script>
+        const dbURL = "https://chaosbridge21-default-rtdb.europe-west1.firebasedatabase.app/chaos.json";
+
         const config = {
             type: Phaser.AUTO,
-            width: 800,
-            height: 400,
-            parent: 'game-container',
-            physics: { default: 'arcade', arcade: { gravity: { y: 1000 } } },
+            width: window.innerWidth,
+            height: window.innerHeight,
+            physics: {
+                default: 'arcade',
+                arcade: { gravity: { y: 1600 }, debug: false }
+            },
             scene: { create: create, update: update }
         };
 
-        let player, keys;
+        let player, platforms, keys, lastHandled = 0, currentLayer = 1;
         const game = new Phaser.Game(config);
 
         function create() {
-            document.getElementById('status').innerText = "GAME LIVE: USE WASD TO MOVE";
+            const worldWidth = 4000;
+            const worldHeight = 2000;
 
-            // Floor
-            let ground = this.add.rectangle(400, 380, 800, 40, 0x00ff00);
-            this.physics.add.existing(ground, true);
-
-            // Player
-            player = this.add.rectangle(100, 300, 30, 30, 0xff0000);
-            this.physics.add.existing(player);
-            player.body.setCollideWorldBounds(true);
+            // 1. AESTHETICS: Cyan Sky
+            this.cameras.main.setBackgroundColor('#87CEEB');
             
-            this.physics.add.collider(player, ground);
+            platforms = this.physics.add.staticGroup();
+
+            // 2. THE SNAKE MAP (3 Layers)
+            // Layer 1 (Bottom): Right to Left
+            createFloor(this, 0, 1800, 3500, 60); 
+            createFloor(this, 3500, 1500, 60, 300); // Wall Jump Point 1
+
+            // Layer 2 (Middle): Left to Right
+            createFloor(this, 500, 1300, 3060, 60); 
+            createFloor(this, 500, 1000, 60, 300); // Wall Jump Point 2
+
+            // Layer 3 (Top): Right to Finish
+            createFloor(this, 560, 800, 3000, 60); 
+
+            // FINISH LINE
+            let finish = this.add.rectangle(3400, 740, 80, 80, 0xffff00);
+            this.physics.add.existing(finish, true);
+
+            // 3. THE RUNNER
+            player = this.add.rectangle(200, 1700, 40, 40, 0xff0000);
+            this.physics.add.existing(player);
+            player.body.setCollideWorldBounds(false);
+            player.body.setBounce(0.1);
+            
+            this.physics.add.collider(player, platforms);
+            this.physics.add.overlap(player, finish, () => {
+                alert("GOD HAS BEEN DEFEATED! YOU WIN!");
+                location.reload();
+            });
+
+            // 4. CAMERA: Dynamic Scrolling
+            this.cameras.main.startFollow(player, true, 0.08, 0.08);
+            this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
 
             keys = this.input.keyboard.addKeys('W,A,S,D,UP,LEFT,RIGHT');
+
+            // Listen for God's actions
+            setInterval(() => {
+                fetch(dbURL).then(r => r.json()).then(data => {
+                    if (data && data.timestamp > lastHandled) {
+                        executeAbility(this, data.command);
+                        lastHandled = data.timestamp;
+                    }
+                });
+            }, 300);
+
+            // Handle window resizing
+            window.addEventListener('resize', () => {
+                game.scale.resize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        function createFloor(scene, x, y, w, h) {
+            let f = scene.add.rectangle(x + w/2, y + h/2, w, h, 0x2ecc71);
+            scene.physics.add.existing(f, true);
+            platforms.add(f);
+        }
+
+        function executeAbility(scene, cmd) {
+            console.log("God Triggered:", cmd);
+            
+            if (cmd === 'Lightning') {
+                let strike = scene.add.rectangle(player.x, player.y - 500, 80, 1200, 0xffffff);
+                scene.tweens.add({ targets: strike, alpha: 0, duration: 400, onComplete: () => strike.destroy() });
+                if (Math.abs(player.x - strike.x) < 60) player.body.reset(200, 1700); 
+            }
+            
+            if (cmd === 'Wind') {
+                player.body.setVelocityX(-2500);
+            }
+            
+            if (cmd === 'Blind') {
+                let overlay = scene.add.rectangle(player.x, player.y, window.innerWidth * 3, window.innerHeight * 3, 0x000000).setAlpha(0.99).setDepth(1000);
+                setTimeout(() => overlay.destroy(), 3500);
+            }
+
+            if (cmd === 'Wall') {
+                let wall = scene.add.rectangle(player.x + 150, player.y, 40, 200, 0x2ecc71);
+                scene.physics.add.existing(wall, true);
+                platforms.add(wall);
+                setTimeout(() => wall.destroy(), 3000);
+            }
+
+            if (cmd === 'Gravity') {
+                player.body.setGravityY(5000);
+                player.setFillStyle(0x4b0082); // Change to purple for heavy
+                setTimeout(() => {
+                    player.body.setGravityY(0);
+                    player.setFillStyle(0xff0000);
+                }, 5000);
+            }
         }
 
         function update() {
-            if (!player) return;
-            
-            if (keys.A.isDown || keys.LEFT.isDown) player.body.setVelocityX(-200);
-            else if (keys.D.isDown || keys.RIGHT.isDown) player.body.setVelocityX(200);
-            else player.body.setVelocityX(0);
-
-            if ((keys.W.isDown || keys.UP.isDown) && player.body.touching.down) {
-                player.body.setVelocityY(-500);
+            // MOVEMENT (A/D or Arrows)
+            if (keys.A.isDown || keys.LEFT.isDown) {
+                player.body.setVelocityX(-450);
+            } else if (keys.D.isDown || keys.RIGHT.isDown) {
+                player.body.setVelocityX(450);
+            } else {
+                player.body.setVelocityX(0);
             }
+
+            // JUMPING (W or UP)
+            if ((keys.W.isDown || keys.UP.isDown) && player.body.touching.down) {
+                player.body.setVelocityY(-900);
+            }
+
+            // UI Update for layers
+            if (player.y > 1500) document.getElementById('layer-text').innerText = "LAYER: 1 (BOTTOM)";
+            else if (player.y > 1000) document.getElementById('layer-text').innerText = "LAYER: 2 (MIDDLE)";
+            else document.getElementById('layer-text').innerText = "LAYER: 3 (TOP)";
+        }
+
+        function sendChaos(effect) {
+            fetch(dbURL, { method: 'PUT', body: JSON.stringify({ command: effect, timestamp: Date.now() }) });
         }
     </script>
 </body>
