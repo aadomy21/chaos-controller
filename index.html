@@ -71,16 +71,19 @@ function create() {
     this.cameras.main.setBackgroundColor('#1a1a1a');
     
     platforms = this.physics.add.staticGroup();
-    let floor = this.add.rectangle(1000, 1850, 4000, 100, 0x333333);
-    this.physics.add.existing(floor, true);
-    platforms.add(floor);
+    
+    // Fix: Create rectangle first, then add to physics
+    let floorRect = this.add.rectangle(1000, 1850, 4000, 100, 0x333333);
+    this.physics.add.existing(floorRect, true); 
+    platforms.add(floorRect);
 
     // Sniper Crosshair: Hollow Orange Circle
     crosshair = this.add.circle(0, 0, 30).setStrokeStyle(3, 0xffa500).setDepth(100).setVisible(false);
 
     // Player Model: Solid Square
-    player = this.physics.add.rectangle(200, 1700, 40, 40, 0xff6666);
-    player.setCollideWorldBounds(true);
+    player = this.add.rectangle(200, 1700, 40, 40, 0xff6666);
+    this.physics.add.existing(player);
+    player.body.setCollideWorldBounds(true);
     this.physics.add.collider(player, platforms);
 
     assignRole();
@@ -91,7 +94,6 @@ function assignRole() {
         const data = snap.val() || {};
         const count = Object.keys(data).length;
 
-        // First player is Sniper, others are Runners
         if (count === 0) {
             myRole = "sniper";
             document.getElementById('mobile-sniper').classList.remove('hidden');
@@ -139,7 +141,6 @@ function initNetworking() {
         });
     });
 
-    // Listen for Abilities
     actionRef.on('value', (snap) => {
         const act = snap.val();
         if (act && act.t > (window.lastActT || 0)) {
@@ -152,13 +153,12 @@ function initNetworking() {
 function update() {
     if (myRole === "runner") {
         const keys = this.input.keyboard.createCursorKeys();
-        if (keys.left.isDown || moveDir === -1) player.setVelocityX(-500);
-        else if (keys.right.isDown || moveDir === 1) player.setVelocityX(500);
-        else player.setVelocityX(0);
+        if (keys.left.isDown || moveDir === -1) player.body.setVelocityX(-500);
+        else if (keys.right.isDown || moveDir === 1) player.body.setVelocityX(500);
+        else player.body.setVelocityX(0);
 
         if (Phaser.Input.Keyboard.JustDown(keys.up) && player.body.touching.down) jump();
 
-        // Optimized Sync
         if (Math.abs(player.x - lastSentX) > 2 || Math.abs(player.y - lastSentY) > 2) {
             playerRef.update({ x: Math.round(player.x), y: Math.round(player.y) });
             lastSentX = player.x; lastSentY = player.y;
@@ -166,12 +166,10 @@ function update() {
     }
 
     if (myRole === "sniper") {
-        // PC Number Hotkeys
         const keys = this.input.keyboard.addKeys('ONE,TWO,W,A,S,D');
         if (Phaser.Input.Keyboard.JustDown(keys.ONE)) cast('Lightning');
         if (Phaser.Input.Keyboard.JustDown(keys.TWO)) cast('Wind');
 
-        // Camera Pan
         if (keys.A.isDown) scene.cameras.main.scrollX -= 10;
         if (keys.D.isDown) scene.cameras.main.scrollX += 10;
         if (keys.W.isDown) scene.cameras.main.scrollY -= 10;
@@ -179,7 +177,7 @@ function update() {
 
         const pointer = this.input.activePointer;
         if (pointer.isDown && !isTouchingUI) {
-            if (pointer.wasTouch) { // Mobile Drag
+            if (pointer.wasTouch) {
                 scene.cameras.main.scrollX -= (pointer.position.x - pointer.prevPosition.x);
                 scene.cameras.main.scrollY -= (pointer.position.y - pointer.prevPosition.y);
             }
@@ -189,7 +187,6 @@ function update() {
         }
     }
 
-    // Smooth Remote Interpolation
     Object.values(remotePlayers).forEach(rp => {
         rp.x = Phaser.Math.Linear(rp.x, rp.targetX || rp.x, 0.2);
         rp.y = Phaser.Math.Linear(rp.y, rp.targetY || rp.y, 0.2);
@@ -197,7 +194,7 @@ function update() {
 }
 
 function jump() {
-    if (player.body.touching.down) player.setVelocityY(-900);
+    if (player.body && player.body.touching.down) player.body.setVelocityY(-900);
 }
 
 function cast(type) {
@@ -212,7 +209,7 @@ function handleEffect(act) {
         let beam = scene.add.rectangle(act.x, act.y - 1000, 15, 2000, 0xffffff);
         scene.tweens.add({ targets: beam, alpha: 0, duration: 300, onComplete: () => beam.destroy() });
         if (myRole === "runner" && Math.abs(player.x - act.x) < 30) {
-            player.setPosition(200, 1700); // Respawn
+            player.setPosition(200, 1700);
         }
     }
 }
